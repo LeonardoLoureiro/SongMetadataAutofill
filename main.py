@@ -80,12 +80,7 @@ def show_songs_not_changed():
         print("> %s" % mp3)
 
 
-# This function is to fix the error:
-#       NotImplementedError: Unable to write ID3 v2.2
-# If error comes up just move the song to another folder.
-# Once you've finished with other songs which did not get this error,
-# Just change line 26 with this function and uncomment
-# lines 7 through 9. Things should work now.
+# This function should work for all ID3 tag versions...
 def add_metadata(song_info):
     print("> Adding info to MP3...")
 

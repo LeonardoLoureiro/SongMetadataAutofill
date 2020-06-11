@@ -8,4 +8,4 @@ Small Python program using various libraries to search for a song online and fil
 
 ## How to run
 Simply run the script on `terminal` or `cmd` as `py main.py`.
-Script will run throuhg each search item Spotify gives you, choose correct one. It will do this to all `.mp3`s, it will download all albums covers too. If you want to keep the `.jpg`s then comment the `delete_all_imgs()` function on `main()`.
+Script will iterate over .mp3s in `songs` folder, then run through each search item Spotify gives you, choose correct one. It will do this to all `.mp3`s, it will download all albums covers too. If you want to keep the `.jpg`s then comment the `delete_all_imgs()` function on `main()`.

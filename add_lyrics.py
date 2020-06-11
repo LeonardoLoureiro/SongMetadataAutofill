@@ -121,6 +121,3 @@ def extract_lyrics(lyr_page):
     lyr_clean = lyr_raw.get_text()
     
     return lyr_clean
-
-if __name__ == '__main__':
-    get_lyr_page("https://search.azlyrics.com/search.php?q=marry+the+night")

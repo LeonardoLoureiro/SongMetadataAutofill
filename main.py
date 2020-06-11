@@ -1,17 +1,16 @@
-from    tokens import *
-from    spotipy.oauth2 import SpotifyClientCredentials
 import  spotipy
+from    tokens import *
+from    add_lyrics import *
+from    spotipy.oauth2 import SpotifyClientCredentials
 
 from    mutagen.easyid3 import EasyID3
 from    mutagen.mp3 import MP3
-from    mutagen.id3 import ID3, APIC
+from    mutagen.id3 import ID3, APIC, USLT
 
-import  json
-import  shutil
+import shutil
 import os
 import glob
 import urllib.request
-import time
 
 if not os.path.exists("imgs"):
     print("'imgs' folder not found, creating...")
@@ -20,10 +19,13 @@ if not os.path.exists("imgs"):
 if not os.path.exists("songs"):
     print("'songs' folder not found, creating...")
     os.makedirs("songs")
-    os.makedirs("songs/DONE")
+    if not os.path.exists("songs/DONE"):
+        os.makedirs("songs/DONE")
 
 songs_not_changed = []
 song_paths =        []
+lyr_not_found =     []
+song_nos =          []
 dest_path =         "songs/DONE"
 
 def main():
@@ -33,69 +35,29 @@ def main():
         for song in song_paths:
             name = os.path.basename( song )
             print()
-            print("-"*5 + " Loading \"%s\" file "%(name) + "-"*5)
+            print("#"*5 + " Loading \"%s\" file "%(name) + "#"*5)
             song_info = search_song(name)
 
             if song_info == None:
                 continue
 
             song_info["mp3_path"] = song
-
-            add_metadata(song_info)
-            move_song(song_info["mp3_path"], dest_path)
+            if add_metadata(song_info):
+                move_song(song_info["mp3_path"], dest_path)
             
     except KeyboardInterrupt:
         print("\n> cancelling processes... <")
 
     show_songs_not_changed()
+    show_lyrics_not_found()
     delete_all_imgs()
     
-    return 0
-
-
-# function to remove all cover photos,
-# if you want to keep them just comment function
-# on main().
-def delete_all_imgs():
-    print("\n> cleaning up imgs dir... <")
-    for img in glob.glob('imgs\*.jp*g'):
-        os.remove(img)
-
-    print("> clean up complete! <")
-        
-def move_song(song_path, dest_path):
-    print("> Moving %s into %s..." % (song_path, dest_path) )
-    new_dest = shutil.move(song_path, dest_path)
-    print("> Successfully moved song: %s" % (os.path.basename(new_dest)) )
-
-def show_songs_not_changed():
-    # if everything ran ok, then don't bother printing list
-    if not songs_not_changed:
-        return
-
-    print()
-    print("="*30 + " MP3s not edited: " + "="*30)
-
-    for mp3 in songs_not_changed:
-        print("> %s" % mp3)
-
+    return 1
 
 # This function should work for all ID3 tag versions...
 def add_metadata(song_info):
     print("> Adding info to MP3...")
 
-    # this complicated little chunk of code is to simply embed the
-    # cover art to the mp3. The wrapper (EasyID3) doesn't
-    # have the actual item for image, so have to do it manually.
-    audio_mutagen = MP3(song_info["mp3_path"], ID3=ID3)
-    audio_mutagen.tags.add( APIC(
-        mime='image/jpeg',
-        type=3,
-        desc=u'Cover',
-        data=open( song_info["img_path"] ,'rb').read() )
-    )
-    audio_mutagen.save()
-    
     audio = EasyID3( song_info["mp3_path"] ) 
 
     audio["album"] =        song_info["album"]
@@ -104,14 +66,57 @@ def add_metadata(song_info):
     audio["date"] =         song_info["release_date"][0:4]
     audio["albumartist"] =  song_info["album_arts"]
 
-    # similar to eyed3, but have to add raw string insteadof having lib to do it for you
+    # Number of album tracks user format "%d/%d".
     audio["tracknumber"] = "%s/%s" % (song_info['track_num'], song_info['total_tracks'] )
 
-    # making sure all tags are applied to mp3
+    # making sure all tags above are applied to mp3
     audio.save()
-    
-    return
 
+    # This complicated little chunk of code is to simply embed the
+    # cover art to the mp3. The wrapper (EasyID3) doesn't
+    # have the actual item for image, so have to do it manually.
+    # But first have to delete all 'APIC' tags in case one already exists,
+    # Mutagen does not have a way to check if a specific tag already exists.
+    # If they're not deleted then programs will just add another cover art to
+    # file itself and file size will grow if program iterates over mp3 again.
+
+    song = ID3(song_info["mp3_path"])   # Load the song
+    song.delall("APIC")                 # Delete every APIC tag
+    song.save()                         # Save song
+
+    # Now adding album cover...
+    audio_mutagen = MP3(song_info["mp3_path"], ID3=ID3)
+    audio_mutagen.tags.add( APIC(
+        mime='image/jpeg',
+        type=3,
+        desc=u'Cover',
+        data=open( song_info["img_path"] ,'rb').read() )
+    )
+    audio_mutagen.save()
+
+    # adding lyrics, all functions are found in "get_lyrics.py"
+    if not add_lyrics( song_info["mp3_path"] ):
+        print("\n")
+    
+    return 1
+
+def show_lyrics_not_found():
+    if not lyr_not_found or not song_nos:
+        return 0
+    
+    print("~"*40)
+    
+    print(">> Song lyrics not found: <<")
+    for song in lyr_not_found:
+        print("> %s" % song)
+
+    print("*"*40)
+
+    print(">> Songs said no to: <<")
+    for song in song_nos:
+        print("> %s" % song)
+
+    print("~"*40)
 
 def search_song(name):
     name2 = name[:-4]
@@ -164,11 +169,11 @@ def show_song_info(song_info):
     print("\nFound song:")
     for i in song_info:
         tmp_str = i
-        tmp_str = tmp_str.ljust(25, '.')
+        tmp_str = tmp_str.ljust(25, '.') # pads out string with '.'
         print("\t%s%s" % (tmp_str, song_info[i]) )
 
 # try_n refers  to the position of which search item is the
-# one the user wants.
+# one the user wants on the original JSON variable Spotipy returned.
 def extract_info(results, try_n):
     tmp_dict = {}
 
@@ -186,7 +191,8 @@ def extract_info(results, try_n):
 # function for songs that have multiple artists.
 # Mutgen can add multiple artists to an mp3 and
 # accepts it as a list. HOWEVER, iTunes doesn't
-# register all of them, just the first.
+# register all of them, just the first but and
+# when it does it shows them all separated by a '/'.
 def extract_artists(results_artists):
     arts_list = []
     art_name = ""
@@ -194,11 +200,9 @@ def extract_artists(results_artists):
     for artist in results_artists:
         arts_list.append(artist["name"])
 
-    # art_name = ", ".join( arts_list )
-
     return arts_list
 
-# downloads album art, maybe make program delete it when its finished?
+# downloads album art to folder 'imgs'
 def download_img(url):
     img_name = os.path.basename(url)
     img_path = "imgs\\" + img_name + ".jpg"
@@ -206,6 +210,30 @@ def download_img(url):
     urllib.request.urlretrieve(url, img_path)
 
     return img_path
+
+# function to remove all cover photos,
+# if you want to keep them just comment function
+# on main().
+def delete_all_imgs():
+    print("\n> cleaning up imgs dir... <")
+    for img in glob.glob('imgs\*.jp*g'):
+        os.remove(img)
+
+    print("> clean up complete! <")
+        
+def move_song(song_path, dest_path):
+    new_dest = shutil.move(song_path, dest_path)
+    print("> Successfully moved song: %s" % (os.path.basename(new_dest)) )
+
+def show_songs_not_changed():
+    # if everything ran ok, then don't bother printing list
+    if not songs_not_changed:
+        return
+
+    print("="*30 + " MP3s not edited: " + "="*30)
+
+    for mp3 in songs_not_changed:
+        print("> %s" % mp3)
 
 def get_songs():
     for mp3 in glob.glob("songs\*.mp3"):
@@ -218,4 +246,4 @@ if __name__ == '__main__':
     main()
 
 # To see all possible tags that EasyID3 can add to mp3s, just run:
-#   > print( EasyID3.valid_keys.keys() )
+#  print( EasyID3.valid_keys.keys() )

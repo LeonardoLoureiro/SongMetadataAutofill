@@ -75,24 +75,34 @@ def add_metadata(song_info):
     # This complicated little chunk of code is to simply embed the
     # cover art to the mp3. The wrapper (EasyID3) doesn't
     # have the actual item for image, so have to do it manually.
-    # But first have to delete all 'APIC' tags in case one already exists,
-    # Mutagen does not have a way to check if a specific tag already exists.
-    # If they're not deleted then programs will just add another cover art to
-    # file itself and file size will grow if program iterates over mp3 again.
+    # First have to check if a cover art already exists in mp3 by
+    # checking if 'APIC' tag exists. If it does, adding cover art is skipped.
+    
+    has_pic_or_not = False
+    tmp = ID3(song_info["mp3_path"])
 
-    song = ID3(song_info["mp3_path"])   # Load the song
-    song.delall("APIC")                 # Delete every APIC tag
-    song.save()                         # Save song
+    # check if cover already exists
+    for s, t in tmp.items():
+        if "APIC" in s:
+            print("> Cover art detected, skipping...")
+            has_pic_or_not = True
+            
+            break
 
-    # Now adding album cover...
-    audio_mutagen = MP3(song_info["mp3_path"], ID3=ID3)
-    audio_mutagen.tags.add( APIC(
-        mime='image/jpeg',
-        type=3,
-        desc=u'Cover',
-        data=open( song_info["img_path"] ,'rb').read() )
-    )
-    audio_mutagen.save()
+    tmp.save()
+
+    # Now adding album cover if none is present...
+    if not has_pic_or_not:
+        audio_mutagen = MP3(song_info["mp3_path"], ID3=ID3)
+        
+        audio_mutagen.tags.add( APIC(
+            mime='image/jpeg',
+            type=3,
+            desc=u'Cover',
+            data=open( song_info["img_path"] ,'rb').read() )
+        )
+        
+        audio_mutagen.save()
 
     # adding lyrics, all functions are found in "get_lyrics.py"
     if not add_lyrics( song_info["mp3_path"] ):

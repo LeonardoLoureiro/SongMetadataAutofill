@@ -17,6 +17,9 @@ def add_lyrics(song_path):
 
     song_name = get_song_info(song_path)
 
+    if song_name == "" or not song_name:
+        return 0
+
     req_url = base_search_url + song_name
 
     lyr_page = get_lyr_page(req_url)

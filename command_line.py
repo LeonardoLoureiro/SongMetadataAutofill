@@ -7,7 +7,7 @@ from    mutagen.easyid3 import EasyID3
 from    mutagen.mp3 import MP3
 from    mutagen.id3 import ID3, APIC, USLT
 
-import shutil, os, sys, glob
+import shutil, os, sys, glob, json
 import urllib.request
 import argparse
 
@@ -247,33 +247,78 @@ def get_options(args):
     parser.add_argument("-u", "--uri",
                         help="URI of specific song on Spotify. If used, \
                                 Spotify prompt will not be shown.")
+    parser.add_argument("-i", "--input",
+                        help="Input MP3 file, used when URI is provided.")
     parser.add_argument("--overwrite", action='store_true',
                         help="This option will delete old info and replace it with new one. \
                                 Use it if you want to replace Cover art.")
     parser.add_argument("--add-lyrics", action='store_true',
                         help="Only search for and add lyrics to mp3.")
-
-
-    parser.add_argument("-p", "--path", required=True,
+    
+    parser.add_argument("-p", "--path",
                         help="Path to where all songs are stored.")
 
     options = parser.parse_args(args)
 
     return options
 
+def add_lyrs_only(song):
+    name = os.path.basename( song )
+    print()
+    print("#"*5 + " Adding lyrics to \"%s\" file "%(name) + "#"*5)
+
+    if not add_lyrics( song ):
+        print("\n")
+
+    return 1
+
+def custom_download( uri ):
+    raw_song_info = sp.track( uri )
+    
+    song_info = extract_uri_info( raw_song_info )
+
+    song_info["mp3_path"] = options.input
+
+    return add_metadata(song_info)
+
+def extract_uri_info( results ):
+    tmp_dict = {}
+
+    tmp_dict["song_name"] =	    results["name"]
+    tmp_dict["arts_names"] =        extract_artists(results["artists"])
+    tmp_dict["album_arts"] =        extract_artists(results["album"]["artists"])
+    tmp_dict["album"] =             results["album"]["name"]	
+    tmp_dict["release_date"]=       results["album"]["release_date"]
+    tmp_dict["track_num"] =         results["track_number"]
+    tmp_dict["total_tracks"]=       results["album"]["total_tracks"]
+    tmp_dict["img_path"] =          download_img( results["album"]["images"][0]["url"] )
+
+    return tmp_dict    
+
 def main():
     try:
-        # if user chooses to only add lyrics everything else is skipped.
+        ## Add only lyrics route...
         if options.add_lyrics:
             for song in song_paths:
-                name = os.path.basename( song )
-                print()
-                print("#"*5 + " Adding lyrics to \"%s\" file "%(name) + "#"*5)
+                add_lyrs_only( song )
 
-                if not add_lyrics( song ):
-                    print("\n")
+        ## URI route...
+        elif options.uri is not None:
+            # Check if user passed '--path', say to use '-i'
+            # instead since if they're using '--path' then
+            # all the mp3 are gonna have the same info OR
+            # if they haven't used '-i', say to you have to pass it.
+            if options.path is not None or options.input is None:
+                print("Please use '-i' or '--input' and provive an MP3 file.")
+                
+                return 0
             
-            return 1
+            if custom_download( options.uri ):
+                print(">> Info added successfully! <<")
+                return 1
+
+            else:
+                return 0
 
         else: 
             for song in song_paths:
@@ -299,22 +344,24 @@ def main():
     return 1
 
 if __name__ == '__main__':
-
     options = get_options( sys.argv[1:] )
-
-    if not get_songs(options.path):
-        print("> Dir does not exist! <")
 
     # Create folder within path given so songs that
     # have already been edited can be moved out of the way.
     # in case user already adds in the slash in the string
-    dest_path_str = options.path
-    dest_path_str += "DONE" if dest_path_str[-1] == "\\" or dest_path_str[-1] == "/" else "\\DONE"
+    # IF '--path' is used instead of '--input'.
+    if options.path is not None:
+        if not get_songs(options.path):
+            print("> Dir does not exist! <")
+        
+        dest_path_str = options.path
+        dest_path_str += "DONE" if dest_path_str[-1] == "\\" or dest_path_str[-1] == "/" else "\\DONE"
     
-    if not os.path.exists( dest_path_str ):
-        os.makedirs( dest_path_str )    
+        if not os.path.exists( dest_path_str ):
+            os.makedirs( dest_path_str )    
 
-    client_credentials_manager = SpotifyClientCredentials(client_id=client, client_secret=client_sec)
+    client_credentials_manager = SpotifyClientCredentials(client_id=client,
+                                                          client_secret=client_sec)
     sp = spotipy.Spotify(client_credentials_manager=client_credentials_manager)
 
     main()

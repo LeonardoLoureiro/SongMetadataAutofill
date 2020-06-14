@@ -90,13 +90,18 @@ def choose_lyr(list_of_lyrs):
     print()
     
     for search_block in list_of_lyrs:
-        lyr_sample = search_block.find("small")
-        lyr_sample = lyr_sample.get_text()
+        block_lyr_sample = search_block.find("small")
+        block_title = search_block.find_all("b")
+        
+        lyr_sample = block_lyr_sample.get_text()
+        lyr_title = "{} by {}".format(block_title[0].get_text(),
+                                      block_title[1].get_text())
         
         print("-"*40)
         print("Lyric sample:")
+        print("> {}".format(lyr_title))
         print("> {}".format(lyr_sample))
-        print("\nAre lyrics correct?")
+        print("\nCorrect lyrics?")
         correct_or_not = input("> ")
 
         if correct_or_not == 'y':

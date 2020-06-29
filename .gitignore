@@ -1,4 +1,5 @@
 tokens*
 __pycache__*
+ignore_folder*
 *.rar
 *.txt

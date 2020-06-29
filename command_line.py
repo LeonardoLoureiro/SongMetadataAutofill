@@ -1,112 +1,29 @@
 import  spotipy
-from    tokens import *
-from    add_lyrics import *
 from    spotipy.oauth2 import SpotifyClientCredentials
 
-from    mutagen.easyid3 import EasyID3
-from    mutagen.mp3 import MP3
-from    mutagen.id3 import ID3, APIC, USLT
+from    tokens import *
+from    show_funcs import *
+from    add_lyrics import *
+from    parser_file import get_options
 
-import shutil, os, sys, glob, json
+from    mutagen.easyid3 import EasyID3
+from    mutagen.easymp4 import EasyMP4
+
+from    mutagen.mp4 import MP4, MP4Cover
+from    mutagen.id3 import ID3, APIC
+
+import shutil, os, sys, glob
 import urllib.request
-import argparse
 
 songs_not_changed = []
+
 song_paths =        []
+song_paths_itunes = []
+
 lyr_not_found =     []
+
 song_nos =          []
 dest_path =         ""
-
-# This function should work for all ID3 tag versions...
-def add_metadata(song_info):
-    print("> Adding info to MP3...")
-
-    audio = EasyID3( song_info["mp3_path"] ) 
-
-    audio["album"] =        song_info["album"]
-    audio["title"] =        song_info["song_name"]
-    audio["artist"] =       song_info["arts_names"]
-    audio["date"] =         song_info["release_date"][0:4]
-    audio["albumartist"] =  song_info["album_arts"]
-
-    # Number of album tracks user format "%d/%d".
-    audio["tracknumber"] = "%s/%s" % (song_info['track_num'], song_info['total_tracks'] )
-
-    # making sure all tags above are applied to mp3
-    audio.save()
-
-    # This complicated little chunk of code is to simply embed the
-    # cover art to the mp3. The wrapper (EasyID3) doesn't
-    # have the actual item for image, so have to do it manually.
-    # First have to check if user wants to overwrite over old cover art,
-    # if they don't, then it checks if there is already a covert art,
-    # if there is one then nothing is added.
-
-    if options.overwrite:
-        file = ID3( song_info["mp3_path"] )  # Load mp3
-        file.delall("APIC")     # Delete every APIC tag (Cover art)
-        file.save()             # Save mp3
-
-        audio_mutagen = MP3(song_info["mp3_path"], ID3=ID3)
-        
-        audio_mutagen.tags.add( APIC(
-            mime='image/jpeg',
-            type=3,
-            desc=u'Cover',
-            data=open( song_info["img_path"] ,'rb').read() )
-        )
-        
-        audio_mutagen.save()
-
-    else:
-        # checking if cover already exists, if it does then skip...
-        has_pic_or_not = False
-        tmp = ID3(song_info["mp3_path"])
-        
-        for s, t in tmp.items():
-            if "APIC" in s:
-                print("> Cover art detected, skipping...")
-                has_pic_or_not = True
-                
-                break
-
-        tmp.save() # closing file
-
-        # if no cover is found, then add art...
-        audio_mutagen = MP3(song_info["mp3_path"], ID3=ID3)
-        audio_mutagen.tags.add( APIC(
-            mime='image/jpeg',
-            type=3,
-            desc=u'Cover',
-            data=open( song_info["img_path"] ,'rb').read() )
-        )
-        
-        audio_mutagen.save()
-
-    # adding lyrics, all functions are found in "get_lyrics.py"
-    if not add_lyrics( song_info["mp3_path"] ):
-        print("\n")
-        return 0
-    
-    return 1
-
-def show_lyrics_not_found():
-    if not lyr_not_found or not song_nos:
-        return 0
-    
-    print("~"*40)
-    
-    print(">> Song lyrics not found: <<")
-    for song in lyr_not_found:
-        print("> %s" % song)
-
-    print("*"*40)
-
-    print(">> Songs said no to: <<")
-    for song in song_nos:
-        print("> %s" % song)
-
-    print("~"*40)
 
 def search_song(name):
     name2 = name[:-4]
@@ -121,8 +38,7 @@ def search_song(name):
         songs_not_changed.append(name)
 
     return correct_song
-    
-    
+
 # iterating over all results obtained from search to look for correct one
 def choose_corr_song(results):
     try_n = 0
@@ -155,15 +71,8 @@ def choose_corr_song(results):
         print("\n" + "-"*10 + " No more results from search " + "-"*10)
         return None
 
-def show_song_info(song_info):
-    print("\nFound song:")
-    for i in song_info:
-        tmp_str = i
-        tmp_str = tmp_str.ljust(25, '.') # pads out string with '.'
-        print("\t%s%s" % (tmp_str, song_info[i]) )
-
-# try_n refers  to the position of which search item is the
-# one the user wants on the original JSON variable Spotipy returned.
+# try_n refers to the position of which search item is the
+# one the user wants in the original JSON variable Spotipy returned.
 def extract_info(results, try_n):
     tmp_dict = {}
 
@@ -175,14 +84,13 @@ def extract_info(results, try_n):
     tmp_dict["track_num"] =         results["tracks"]["items"][try_n]["track_number"]
     tmp_dict["total_tracks"]=       results["tracks"]["items"][try_n]["album"]["total_tracks"]   
     tmp_dict["image"] =             results["tracks"]["items"][try_n]["album"]["images"][0]["url"]
+    tmp_dict["explicit"] =          results["tracks"]["items"][try_n]["explicit"]
 
     return tmp_dict
 
 # function for songs that have multiple artists.
 # Mutgen can add multiple artists to an mp3 and
-# accepts it as a list. HOWEVER, iTunes doesn't
-# register all of them, just the first but and
-# when it does it shows them all separated by a '/'.
+# accepts it as a list.
 def extract_artists(results_artists):
     arts_list = []
     art_name = ""
@@ -195,6 +103,7 @@ def extract_artists(results_artists):
 # downloads album art to folder 'imgs'
 def download_img(url):
     img_name = os.path.basename(url)
+    
     img_path = "imgs\\" + img_name + ".jpg"
 
     urllib.request.urlretrieve(url, img_path)
@@ -202,8 +111,7 @@ def download_img(url):
     return img_path
 
 # function to remove all cover photos,
-# if you want to keep them just comment function
-# on main().
+# if you want to keep them just use '-k' option.
 def delete_all_imgs():
     print("\n> cleaning up imgs dir... <")
     for img in glob.glob('imgs\*.jp*g'):
@@ -215,15 +123,7 @@ def move_song(song_path, dest_path):
     new_dest = shutil.move(song_path, dest_path)
     print("> Successfully moved song: %s" % (os.path.basename(new_dest)) )
 
-def show_songs_not_changed():
-    # if everything ran ok, then don't bother printing list
-    if not songs_not_changed:
-        return
 
-    print("="*30 + " MP3s not edited: " + "="*30)
-
-    for mp3 in songs_not_changed:
-        print("> %s" % mp3)
 
 def get_songs(path):
     if not os.path.exists(path):
@@ -235,32 +135,18 @@ def get_songs(path):
 
     else:
         songs_path_str = path + "\*.mp3"
+
+    # for iTune's '.m4a' files.
+    if path[-1] == "\\" or path[-1] == "/":
+        songs_path_str = path + "*.m4a"
+
+    else:
+        songs_path_str = path + "\*.m4a"
     
-    for mp3 in glob.glob(songs_path_str):
-        song_paths.append(mp3)
+    for mp4 in glob.glob(songs_path_str):
+        song_paths_itunes.append(mp4)
 
     return 1
-
-def get_options(args):
-    parser = argparse.ArgumentParser(description='Program to add metadata to unorganized MP3s via the Spotipy API.')
-    
-    parser.add_argument("-u", "--uri",
-                        help="URI of specific song on Spotify. If used, \
-                                Spotify prompt will not be shown.")
-    parser.add_argument("-i", "--input",
-                        help="Input MP3 file, used when URI is provided.")
-    parser.add_argument("--overwrite", action='store_true',
-                        help="This option will delete old info and replace it with new one. \
-                                Use it if you want to replace Cover art.")
-    parser.add_argument("--add-lyrics", action='store_true',
-                        help="Only search for and add lyrics to mp3.")
-    
-    parser.add_argument("-p", "--path",
-                        help="Path to where all songs are stored.")
-
-    options = parser.parse_args(args)
-
-    return options
 
 def add_lyrs_only(song):
     name = os.path.basename( song )
@@ -272,14 +158,23 @@ def add_lyrs_only(song):
 
     return 1
 
-def custom_download( uri ):
+def custom_download_mp3( uri ):
     raw_song_info = sp.track( uri )
     
     song_info = extract_uri_info( raw_song_info )
 
     song_info["mp3_path"] = options.input
 
-    return add_metadata(song_info)
+    return add_metadata_mp3(song_info)
+
+def custom_download_m4a( uri ):
+    raw_song_info = sp.track( uri )
+    
+    song_info = extract_uri_info( raw_song_info )
+
+    song_info["mp3_path"] = options.input
+
+    return add_metadata_m4a(song_info)
 
 def extract_uri_info( results ):
     tmp_dict = {}
@@ -292,34 +187,212 @@ def extract_uri_info( results ):
     tmp_dict["track_num"] =         results["track_number"]
     tmp_dict["total_tracks"]=       results["album"]["total_tracks"]
     tmp_dict["img_path"] =          download_img( results["album"]["images"][0]["url"] )
+    tmp_dict["explicit"] =          results["explicit"]
+                                            
+    return tmp_dict
 
-    return tmp_dict    
+# This function should work for all ID3 tag versions...
+def add_metadata_mp3(song_info):
+    print("> Adding info to MP3...")
+
+    audio = EasyID3( song_info["mp3_path"] ) 
+
+    audio["album"] =        song_info["album"]
+    audio["title"] =        song_info["song_name"]
+    audio["artist"] =       song_info["arts_names"]
+    audio["date"] =         song_info["release_date"][0:4]
+    audio["albumartist"] =  song_info["album_arts"]
+
+    # Number of album tracks user format "%d/%d".
+    audio["tracknumber"] = "%s/%s" % (song_info['track_num'], song_info['total_tracks'] )
+    audio.save()
+
+    # This complicated little chunk of code is to simply embed the
+    # cover art to the mp3. The wrapper (EasyID3) doesn't
+    # have the actual item for image, so have to do it manually.
+    # First have to check if user wants to overwrite over old cover art,
+    # if they don't, then it checks if there is already a covert art,
+    # if there is one then nothing is added. If user wants to overwrite,
+    # then all 'APIC' tags are deleted and new one is added.
+
+    if options.overwrite:
+        song = ID3( song_info["mp3_path"] )  # Load mp3
+        song.delall("APIC")     # Delete every APIC tag (Cover art)
+
+        song.add( APIC(
+            encoding=0,
+            mime='image/jpeg',
+            type=3,     # type 3 just means it's the cover of the song
+            desc=u'Cover',
+            data=open( song_info["img_path"] ,'rb').read() )
+        )
+        
+        song.save()
+
+    else:
+        # checking if cover already exists, if it does then skip...
+        has_pic_or_not = False
+        tmp = ID3( song_info["mp3_path"] )
+        
+        for s, t in tmp.items():
+            if "APIC" in s:
+                print("> Cover art detected, skipping...")
+                has_pic_or_not = True
+                
+                break
+
+        tmp.save() # closing file
+
+        # if no cover is found, then add art...
+        if not has_pic_or_not:
+            song = ID3( song_info["mp3_path"] )
+            song.add( APIC(
+                encoding=0,
+                mime='image/jpeg',
+                type=3,
+                desc=u'Cover',
+                data=open( song_info["img_path"] ,'rb').read()
+                )
+            )
+            
+            song.save()
+
+    # adding lyrics, all functions are found in "get_lyrics.py"
+    if not add_lyrics( song_info["mp3_path"] ):
+        print("\n")
+        
+        return 0
+    
+    return 1
+
+def add_metadata_m4a( song_info ):
+    # instead of just using basic 'MP4' for ALL tags
+    # use both as EasyMP4 handles the most common tags
+    # and it's easier to use if, in future, decide to add more info.
+    itunes_song = EasyMP4( song_info["mp3_path"] )
+    
+    itunes_song["album"] =        song_info["album"]
+    itunes_song["title"] =        song_info["song_name"]
+    itunes_song["artist"] =       song_info["arts_names"]
+    itunes_song["date"] =         song_info["release_date"][0:4]
+    itunes_song["albumartist"] =  song_info["album_arts"]
+    itunes_song["tracknumber"] = "%s/%s" % (song_info['track_num'], song_info['total_tracks'] )
+
+    itunes_song.save()
+
+    # adding tags which are not avaiable through EasyMP4
+    img_data = open( song_info["img_path"] ,'rb').read()
+    itunes_song = MP4( song_info["mp3_path"] )
+    itunes_song.tags["covr"] = [( MP4Cover( img_data ) )] # album art
+
+    itunes_song.tags["rtng"] = [song_info["explicit"]] # rating
+    
+    itunes_song.save()
+
+    return 1
+
+def make_song_explicit( song_path ):
+    if song_path[-4:] != ".m4a":
+        print(">> Only M4A files accepted <<")
+        return 0
+    
+    song = MP4( song_path )
+
+    song.tags["rtng"] = [True]
+
+    song.save()
+
+    return 1
+
+def get_songs_from_file( file_path ):
+    with open( file_path, 'r', encoding='utf-8' ) as f:
+        for line in f.read().splitlines():
+            if line[-4:] == ".m4a":
+                song_paths_itunes.append( line )
+
+            elif line[-4:] == ".mp3":
+                song_paths.append( line )
+
+    return 1
+
+def check_path( path_name ):
+    if not os.path.exists( path_name ):
+        print(">> Path/File does not exist! <<")
+        return 0
+
+    else:
+        return 1
+
+def path_init():
+    # Create folder within path given so songs that
+    # have already been edited can be moved out of the way.
+    # in case user already adds in the slash in the string
+    # IF '--path' is used instead of '--input'.
+    if options.path is not None:
+        if not get_songs(options.path):
+            print("> Dir does not exist! <")
+        
+        dest_path_str = options.path
+
+        dest_path_str += "DONE" if dest_path_str[-1] == "\\" or dest_path_str[-1] == "/" else "\\DONE"
+    
+        if not os.path.exists( dest_path_str ):
+            os.makedirs( dest_path_str )
+
+    elif options.list_file is not None:
+        if get_songs_from_file( options.list_file ):
+            print(">> Imported list of songs from file... <<")
+
+        else:
+            return 0
+
+    elif options.input is not None:
+        if check_path( options.input ):
+            song_paths_itunes.append( options.input )
+
+    return 1
 
 def main():
     try:
-        ## Add only lyrics route...
+        ## Add lyrics only route...
         if options.add_lyrics:
             for song in song_paths:
                 add_lyrs_only( song )
 
         ## URI route...
         elif options.uri is not None:
-            # Check if user passed '--path', say to use '-i'
-            # instead since if they're using '--path' then
-            # all the mp3 are gonna have the same info OR
-            # if they haven't used '-i', say to you have to pass it.
-            if options.path is not None or options.input is None:
-                print("Please use '-i' or '--input' and provive an MP3 file.")
-                
+            if options.input is None:
+                print(">> '-i' is needed for '--uri/-u' option! <<")
                 return 0
             
-            if custom_download( options.uri ):
+            for song in song_paths:
+                custom_download_mp3( options.uri )
                 print(">> Info added successfully! <<")
+                
+                return 1
+
+            for song in song_paths_itunes:
+                custom_download_mp3( options.uri )
+                print(">> Info added successfully! <<")
+                
                 return 1
 
             else:
                 return 0
 
+        ## Add explicit tag only route
+        # only '.m4a' files are accepted - paths in 'song_paths_itunes'
+        elif options.explicit:            
+            for song in song_paths_itunes:
+                make_song_explicit( song )
+                song_name = os.path.basename( song )
+                print(">> File %s is now tagged explicit. <<" % song_name)
+
+            print("\n> Rating 'explicit' has been added to song(s) <")
+
+            return 1
+
+        ## Normal route - only '-p' is given.
         else: 
             for song in song_paths:
                 name = os.path.basename( song )
@@ -331,38 +404,45 @@ def main():
                     continue
 
                 song_info["mp3_path"] = song
-                if add_metadata(song_info):
-                    move_song(song_info["mp3_path"], dest_path_str)
-            
+                if add_metadata_mp3(song_info):
+                    if options.no_moving is False:
+                        move_song(song_info["mp3_path"], dest_path_str)
+
+            # in case there's iTunes song files too...
+            for song in song_paths_itunes:
+                name = os.path.basename( song )
+                print()
+                print("#"*5 + " Loading \"%s\" file "%(name) + "#"*5)
+                song_info = search_song(name)
+
+                if song_info == None:
+                    continue
+
+                song_info["mp3_path"] = song
+                
+                if add_metadata_m4a( song_info ):
+                    if options.no_moving is False:
+                        move_song(song_info["mp3_path"], dest_path_str)
+                        
+                    
     except KeyboardInterrupt:
         print("\n> cancelling processes... <")
 
     show_songs_not_changed()
     show_lyrics_not_found()
-    delete_all_imgs()
+
+    if not options.keep_imgs:
+        delete_all_imgs()
     
     return 1
 
 if __name__ == '__main__':
     options = get_options( sys.argv[1:] )
-
-    # Create folder within path given so songs that
-    # have already been edited can be moved out of the way.
-    # in case user already adds in the slash in the string
-    # IF '--path' is used instead of '--input'.
-    if options.path is not None:
-        if not get_songs(options.path):
-            print("> Dir does not exist! <")
-        
-        dest_path_str = options.path
-        dest_path_str += "DONE" if dest_path_str[-1] == "\\" or dest_path_str[-1] == "/" else "\\DONE"
-    
-        if not os.path.exists( dest_path_str ):
-            os.makedirs( dest_path_str )    
+    path_init()
 
     client_credentials_manager = SpotifyClientCredentials(client_id=client,
                                                           client_secret=client_sec)
+    
     sp = spotipy.Spotify(client_credentials_manager=client_credentials_manager)
 
-    main()
-        
+    main()        
